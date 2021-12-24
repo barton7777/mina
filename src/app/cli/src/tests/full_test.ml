@@ -148,6 +148,7 @@ let run_test () : unit Deferred.t =
           ; keypair = None
           ; all_peers_seen_metric = false
           ; known_private_ip_nets = []
+          ; time_controller
           }
       in
       let net_config =
@@ -156,6 +157,7 @@ let run_test () : unit Deferred.t =
           ; trust_system
           ; time_controller
           ; consensus_local_state
+          ; consensus_constants = precomputed_values.consensus_constants
           ; is_seed = true
           ; genesis_ledger_hash =
               Ledger.merkle_root (Lazy.force Genesis_ledger.t)
