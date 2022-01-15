@@ -1431,6 +1431,12 @@ let create (config : Config.t) ~sinks
     online_broadcaster ~constraint_constants:config.constraint_constants
       config.time_controller
   in
+  (* TODO remove the line below after making sure notification will not lead
+     to a stale lock *)
+  let notify_online () =
+    notify_online () |> don't_wait_for ;
+    Deferred.unit
+  in
   let consensus_constants = config.consensus_constants in
   let wrapped_sinks =
     Sinks.wrap_simple
