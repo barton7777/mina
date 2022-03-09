@@ -9,5 +9,6 @@ let validation_queue_size = 150
 
 let conf_dir_name = ".mina-config"
 
-(* 24*7 hours*)
 let stop_time = 168
+
+(* 24*7 hours*)

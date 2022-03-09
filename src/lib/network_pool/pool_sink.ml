@@ -73,7 +73,6 @@ module Base
           ~metadata:[ ("diff", Diff.verified_to_yojson diff) ] ;
         BC.drop Diff.empty (Diff.reject_overloaded_diff diff) cb
 
-  (* keep logger in type *)
   let verify_impl ~logger ~trace_label resource_pool rl env cb :
       Diff.verified Envelope.Incoming.t option Deferred.t =
     O1trace.trace_recurring (trace_label ^ "_verification") (fun () ->
