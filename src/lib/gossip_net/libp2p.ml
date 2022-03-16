@@ -393,9 +393,10 @@ module Make
                   match Envelope.Incoming.data env with
                   | Message.New_state state ->
                       SinksImpl.Block_sink.push sinks.sink_block
-                        ( Envelope.Incoming.map ~f:(fun _ -> state) env
-                        , Block_time.now config.time_controller
-                        , vc )
+                        ( `Transition
+                            (Envelope.Incoming.map ~f:(fun _ -> state) env)
+                        , `Time_received (Block_time.now config.time_controller)
+                        , `Valid_cb vc )
                   | Message.Transaction_pool_diff diff ->
                       SinksImpl.Tx_sink.push sinks.sink_tx
                         (Envelope.Incoming.map ~f:(fun _ -> diff) env, vc)

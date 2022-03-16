@@ -5,9 +5,9 @@ open Async
 open Pipe_lib.Strict_pipe
 
 type stream_msg =
-  External_transition.t Envelope.Incoming.t
-  * Block_time.t
-  * Mina_net2.Validation_callback.t
+  [ `Transition of External_transition.t Envelope.Incoming.t ]
+  * [ `Time_received of Block_time.t ]
+  * [ `Valid_cb of Mina_net2.Validation_callback.t ]
 
 type t =
   | Sink of
@@ -17,7 +17,7 @@ type t =
       }
   | Void
 
-let push sink (e, tm, cb) =
+let push sink (`Transition e, `Time_received tm, `Valid_cb cb) =
   match sink with
   | Void ->
       Deferred.unit
@@ -33,7 +33,7 @@ let push sink (e, tm, cb) =
           Mina_net2.Validation_callback.fire_if_not_already_fired cb `Reject ;
           Deferred.unit
       | `Within_capacity ->
-          Writer.write writer (e, tm, cb) )
+          Writer.write writer (`Transition e, `Time_received tm, `Valid_cb cb) )
 
 let log_rate_limiter_occasionally rl ~logger ~label =
   let t = Time.Span.of_min 1. in

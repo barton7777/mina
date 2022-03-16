@@ -248,7 +248,11 @@ let run ~logger ~trust_system ~verifier ~transition_reader
   let duplicate_checker = Duplicate_block_detector.create () in
   don't_wait_for
     (Reader.iter transition_reader
-       ~f:(fun (transition_env, time_received, valid_cb) ->
+       ~f:(fun
+            ( `Transition transition_env
+            , `Time_received time_received
+            , `Valid_cb valid_cb )
+          ->
          if Ivar.is_full initialization_finish_signal then (
            let blockchain_length =
              Envelope.Incoming.data transition_env

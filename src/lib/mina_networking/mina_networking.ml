@@ -1440,7 +1440,7 @@ let create (config : Config.t) ~sinks
   let consensus_constants = config.consensus_constants in
   let wrapped_sinks =
     Sinks.wrap_simple
-      ~block_pre:(fun (envelope, _, valid_cb) ->
+      ~block_pre:(fun (`Transition envelope, _, `Valid_cb valid_cb) ->
         Ivar.fill_if_empty first_received_message_signal () ;
         Mina_metrics.(Counter.inc_one Network.gossip_messages_received) ;
         let state = envelope.data in
@@ -1505,7 +1505,7 @@ let create (config : Config.t) ~sinks
         Mina_net2.Validation_callback.set_message_type valid_cb `Transaction ;
         Mina_metrics.(Counter.inc_one Network.Transaction.received) ;
         notify_online ())
-      ~block_post:(fun (tn, tm, _) ->
+      ~block_post:(fun (`Transition tn, `Time_received tm, _) ->
         let lift_consensus_time =
           Fn.compose Unsigned.UInt32.to_int
             Consensus.Data.Consensus_time.to_uint32

@@ -261,7 +261,8 @@ module Make
     let broadcast_state t state =
       Network.broadcast t.network ~sender:t.me state (fun sinks (env, vc) ->
           let time = Block_time.now t.time_controller in
-          SinksImpl.Block_sink.push sinks.sink_block (env, time, vc))
+          SinksImpl.Block_sink.push sinks.sink_block
+            (`Transition env, `Time_received time, `Valid_cb vc))
 
     let broadcast_snark_pool_diff t diff =
       Network.broadcast t.network ~sender:t.me diff (fun sinks ->
