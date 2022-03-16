@@ -47,6 +47,13 @@ module Base
      and type msg := Msg.raw_msg * Msg.raw_callback = struct
   type unwrapped_t = Diff.verified Envelope.Incoming.t * BC.t
 
+  (* TODO consider moving these constants elsewhere *)
+  let max_waiting_jobs = 2048
+
+  let max_concurrent_jobs = 1024
+
+  let verified_pipe_capacity = 1024
+
   type t =
     | Sink :
         { writer :
@@ -59,6 +66,7 @@ module Base
         ; pool : Diff.pool
         ; wrap : unwrapped_t -> 'w
         ; trace_label : string
+        ; throttle : unit Throttle.t
         }
         -> t
     | Void
@@ -122,33 +130,58 @@ module Base
 
   let push t (msg, cb) =
     match t with
-    | Sink { writer = w; logger; rate_limiter = rl; pool; wrap; trace_label }
-      -> (
+    | Sink
+        { writer = w
+        ; logger
+        ; rate_limiter = rl
+        ; pool
+        ; wrap
+        ; trace_label
+        ; throttle
+        } ->
         let env' = Msg.convert msg in
         let cb' = Msg.convert_callback cb in
-        match%bind verify_impl ~logger ~trace_label pool rl env' cb' with
-        | None ->
-            (* TODO log unverified? *)
-            Deferred.unit
-        | Some verified_env ->
-            let m' = wrap (verified_env, cb') in
-            Option.value ~default:Deferred.unit (Strict_pipe.Writer.write w m')
-        )
+        if Throttle.num_jobs_waiting_to_start throttle > max_waiting_jobs then
+          [%log warn] "Ignoring push to %s: throttle is full" trace_label
+        else
+          don't_wait_for
+            (Throttle.enqueue throttle (fun () ->
+                 match%bind
+                   verify_impl ~logger ~trace_label pool rl env' cb'
+                 with
+                 | None ->
+                     [%log debug] "Received unverified gossip on %s" trace_label
+                       ~metadata:
+                         [ ("sender", Envelope.Sender.to_yojson env'.sender)
+                         ; ( "received_at"
+                           , `String (Time.to_string env'.received_at) )
+                         ] ;
+                     Deferred.unit
+                 | Some verified_env ->
+                     let m' = wrap (verified_env, cb') in
+                     Option.value ~default:Deferred.unit
+                       (Strict_pipe.Writer.write w m'))) ;
+        Deferred.unit
     | Void ->
         Deferred.unit
 
   let create ~wrap ~unwrap ~trace_label ~logger pool =
     let r, writer =
       Strict_pipe.create ~name:"verified network pool diffs"
-        (Buffered (`Capacity 1024, `Overflow (Call (on_overflow ~unwrap logger))))
+        (Buffered
+           ( `Capacity verified_pipe_capacity
+           , `Overflow (Call (on_overflow ~unwrap logger)) ))
     in
 
     let rate_limiter =
       Rate_limiter.create
         ~capacity:(Diff.max_per_15_seconds, `Per (Time.Span.of_sec 15.0))
     in
+    let throttle =
+      Throttle.create ~continue_on_error:true ~max_concurrent_jobs
+    in
     ( r
-    , Sink { writer; logger; rate_limiter; pool; wrap; trace_label }
+    , Sink { writer; logger; rate_limiter; pool; wrap; trace_label; throttle }
     , rate_limiter )
 
   let void = Void

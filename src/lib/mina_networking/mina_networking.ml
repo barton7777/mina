@@ -1471,7 +1471,8 @@ let create (config : Config.t) ~sinks
             ~metadata:
               [ ("external_transition", External_transition.to_yojson state) ]
             (Block_received
-               { state_hash = (External_transition.state_hashes state).state_hash
+               { state_hash =
+                   (External_transition.state_hashes state).state_hash
                ; sender = Envelope.Incoming.sender envelope
                }) ;
         Mina_net2.Validation_callback.set_message_type valid_cb `Block ;
@@ -1637,7 +1638,9 @@ let log_gossip logger ~log_msg msg =
 let broadcast_state t state =
   let msg = With_hash.data state in
   log_gossip t.logger (Gossip_net.Message.New_state msg)
-    ~log_msg:(Gossip_new_state { state_hash = State_hash.With_state_hashes.state_hash state }) ;
+    ~log_msg:
+      (Gossip_new_state
+         { state_hash = State_hash.With_state_hashes.state_hash state }) ;
   Mina_metrics.(Gauge.inc_one Network.new_state_broadcasted) ;
   Gossip_net.Any.broadcast_state t.gossip_net msg
 
