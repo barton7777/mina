@@ -65,9 +65,11 @@ let download_seed_peer_list uri =
 
 type publish_functions = { publish_v0 : Message.msg -> unit Deferred.t }
 
-let empty_publish_functions =
-  let unit _ = Deferred.unit in
-  { publish_v0 = unit }
+let empty_publish_functions logger =
+  { publish_v0 =
+      Fn.const
+      @@ Deferred.return ([%log warn] "Call of uninitialized publish_v0")
+  }
 
 let validate_gossip_base ~fn my_peer_id envelope validation_callback =
   (* Messages from ourselves are valid. Don't try and reingest them. *)
@@ -465,7 +467,7 @@ module Make
       let first_peer_ivar = Ivar.create () in
       let high_connectivity_ivar = Ivar.create () in
       let net2_ref = ref (Deferred.never ()) in
-      let pfs_ref = ref empty_publish_functions in
+      let pfs_ref = ref @@ empty_publish_functions config.logger in
       let restarts_r, restarts_w =
         Strict_pipe.create ~name:"libp2p-restarts"
           (Strict_pipe.Buffered
