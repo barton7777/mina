@@ -9,15 +9,6 @@ open Network_peer
 exception No_initial_peers
 
 type Structured_log_events.t +=
-  | Block_received of { state_hash : State_hash.t; sender : Envelope.Sender.t }
-  | Snark_work_received of
-      { work : Snark_pool.Resource_pool.Diff.compact
-      ; sender : Envelope.Sender.t
-      }
-  | Transactions_received of
-      { txns : Transaction_pool.Resource_pool.Diff.t
-      ; sender : Envelope.Sender.t
-      }
   | Gossip_new_state of { state_hash : State_hash.t }
   | Gossip_transaction_pool_diff of
       { txns : Transaction_pool.Resource_pool.Diff.t }
@@ -160,7 +151,7 @@ end
 module Sinks : module type of Sinks
 
 module Gossip_net :
-  Gossip_net.S with module Rpc_intf := Rpcs with type sinks := Sinks.sinks
+  Gossip_net.S with module Rpc_intf := Rpcs with type sinks := Sinks.t
 
 module Config : sig
   type log_gossip_heard =
@@ -199,15 +190,9 @@ val get_peer_node_status :
 val add_peer :
   t -> Network_peer.Peer.t -> is_seed:bool -> unit Deferred.Or_error.t
 
-val on_first_received_message : t -> f:(unit -> 'a) -> 'a Deferred.t
-
-val fill_first_received_message_signal : t -> unit
-
 val on_first_connect : t -> f:(unit -> 'a) -> 'a Deferred.t
 
 val on_first_high_connectivity : t -> f:(unit -> 'a) -> 'a Deferred.t
-
-val online_status : t -> [ `Online | `Offline ] Broadcast_pipe.Reader.t
 
 val random_peers : t -> int -> Network_peer.Peer.t list Deferred.t
 
@@ -301,7 +286,7 @@ val ban_notification_reader :
 
 val create :
      Config.t
-  -> sinks:Sinks.Unwrapped.sinks
+  -> sinks:Sinks.t
   -> get_some_initial_peers:
        (   Rpcs.Get_some_initial_peers.query Envelope.Incoming.t
         -> Rpcs.Get_some_initial_peers.response Deferred.t)

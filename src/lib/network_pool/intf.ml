@@ -92,6 +92,12 @@ module type Resource_pool_diff_intf = sig
        Deferred.t
 
   val is_empty : t -> bool
+
+  val update_metrics :
+       t Envelope.Incoming.t
+    -> Mina_net2.Validation_callback.t
+    -> Logger.t option
+    -> unit
 end
 
 (** A [Resource_pool_intf] ties together an associated pair of
@@ -257,6 +263,10 @@ module type Snark_pool_diff_intf = sig
     }
   [@@deriving yojson, hash]
 
+  type Structured_log_events.t +=
+    | Snark_work_received of { work : compact; sender : Envelope.Sender.t }
+    [@@deriving register_event]
+
   include
     Resource_pool_diff_intf
       with type t := t
@@ -302,6 +312,12 @@ module type Transaction_pool_diff_intf = sig
   module Rejected : sig
     type t = (User_command.t * Diff_error.t) list [@@deriving sexp, yojson]
   end
+
+
+      type Structured_log_events.t +=
+        | Transactions_received of { txns : t; sender : Envelope.Sender.t }
+        [@@deriving
+          register_event ]
 
   include
     Resource_pool_diff_intf

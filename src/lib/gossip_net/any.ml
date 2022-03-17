@@ -24,7 +24,7 @@ end
 module Make
     (SinksImpl : Message.Sinks)
     (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
-  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.sinks = struct
+  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.t = struct
   open Rpc_intf
 
   module type Implementation_intf =
@@ -34,7 +34,7 @@ module Make
 
   type t = Any : 't implementation * 't -> t
 
-  type 't creator = rpc_handler list -> SinksImpl.sinks -> 't Deferred.t
+  type 't creator = rpc_handler list -> SinksImpl.t -> 't Deferred.t
 
   type creatable = Creatable : 't implementation * 't creator -> creatable
 

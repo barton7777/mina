@@ -22,12 +22,10 @@ end
 
 module type Sinks = Message.Sinks
 
-module Wrapped_sinks = Message.Wrapped_sinks
-
 module Make
     (SinksImpl : Message.Sinks)
     (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
-  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.sinks = struct
+  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.t = struct
   include Intf
   module Message = Message
   module Any = Any.Make (SinksImpl) (Rpc_intf)

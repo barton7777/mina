@@ -1090,6 +1090,34 @@ let stop_long_running_daemon t =
   in
   go (Time.Span.of_ms (wait_mins * 60 * 1000 |> Float.of_int))
 
+let offline_time
+    { Genesis_constants.Constraint_constants.block_window_duration_ms; _ } =
+  (* This is a bit of a hack, see #3232. *)
+  let inactivity_ms = block_window_duration_ms * 8 in
+  Block_time.Span.of_ms @@ Int64.of_int inactivity_ms
+
+let setup_timer ~constraint_constants time_controller sync_state_broadcaster =
+  Block_time.Timeout.create time_controller (offline_time constraint_constants)
+    ~f:(fun _ ->
+      Broadcast_pipe.Writer.write sync_state_broadcaster `Offline
+      |> don't_wait_for)
+
+let online_broadcaster ~constraint_constants time_controller =
+  let online_reader, online_writer = Broadcast_pipe.create `Offline in
+  let init =
+    Block_time.Timeout.create time_controller
+      (Block_time.Span.of_ms Int64.zero)
+      ~f:ignore
+  in
+  let current_timer = ref init in
+  let notify_online () =
+    let%map () = Broadcast_pipe.Writer.write online_writer `Online in
+    Block_time.Timeout.cancel time_controller !current_timer () ;
+    current_timer :=
+      setup_timer ~constraint_constants time_controller online_writer
+  in
+  (online_reader, notify_online)
+
 let start t =
   let set_next_producer_timing timing consensus_state =
     let block_production_status, next_producer_timing =
@@ -1526,6 +1554,23 @@ let create ?wallets (config : Config.t) =
               ~pool_max_size:
                 config.precomputed_values.genesis_constants.txpool_max_size
           in
+          let first_received_message_signal = Ivar.create () in
+          let online_status, notify_online_impl =
+            online_broadcaster
+              ~constraint_constants:config.net_config.constraint_constants
+              config.time_controller
+          in
+          let on_first_received_message ~f =
+            Ivar.read first_received_message_signal >>| f
+          in
+
+          (* TODO remove the line below after making sure notification will not lead
+             to a stale lock *)
+          let notify_online () =
+            Ivar.fill_if_empty first_received_message_signal () ;
+            notify_online_impl () |> don't_wait_for ;
+            Deferred.unit
+          in
           let transaction_pool, tx_remote_sink, tx_local_sink =
             trace "transaction_pool" (fun () ->
                 (* make transaction pool return writer for local and incoming diffs *)
@@ -1547,12 +1592,18 @@ let create ?wallets (config : Config.t) =
                   ~frontier_broadcast_pipe:frontier_broadcast_pipe_r)
           in
           let block_reader, block_sink =
-            Network_pool.Block_sink.create ~logger:config.logger
-              ~slot_duration_ms:
-                config.precomputed_values.consensus_constants.slot_duration_ms
+            Network_pool.Block_sink.create
+              { logger = config.logger
+              ; slot_duration_ms =
+                  config.precomputed_values.consensus_constants.slot_duration_ms
+              ; on_push = notify_online
+              ; log_gossip_heard = config.net_config.log_gossip_heard.new_state
+              ; time_controller = config.net_config.time_controller
+              ; consensus_constants = config.net_config.consensus_constants
+              }
           in
           let sinks =
-            { Mina_networking.Sinks.Unwrapped.sink_block = block_sink
+            { Mina_networking.Sinks.sink_block = block_sink
             ; sink_tx = tx_remote_sink
             ; sink_snark_work = snark_remote_sink
             }
@@ -1732,7 +1783,7 @@ let create ?wallets (config : Config.t) =
                             else Deferred.unit) ;
                          breadcrumb))
                   ~most_recent_valid_block
-                  ~precomputed_values:config.precomputed_values)
+                  ~precomputed_values:config.precomputed_values ~notify_online)
           in
           let ( valid_transitions_for_network
               , valid_transitions_for_api
@@ -1923,14 +1974,13 @@ let create ?wallets (config : Config.t) =
                   ~is_seed:config.is_seed ~demo_mode:config.demo_mode
                   ~transition_frontier_and_catchup_signal_incr
                   ~online_status_incr:
-                    ( Var.watch @@ of_broadcast_pipe
-                    @@ Mina_networking.online_status net )
+                    (Var.watch @@ of_broadcast_pipe online_status)
                   ~first_connection_incr:
                     ( Var.watch @@ of_deferred
                     @@ Mina_networking.on_first_connect net ~f:Fn.id )
                   ~first_message_incr:
                     ( Var.watch @@ of_deferred
-                    @@ Mina_networking.on_first_received_message net ~f:Fn.id ))
+                    @@ on_first_received_message ~f:Fn.id ))
           in
           (* tie other knot *)
           sync_status_ref := Some sync_status ;

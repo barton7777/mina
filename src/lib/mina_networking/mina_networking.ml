@@ -1,7 +1,6 @@
 open Core
 open Async
 open Mina_base
-open Mina_state
 open Mina_transition
 open Network_peer
 open Network_pool
@@ -10,26 +9,6 @@ open Pipe_lib
 let refused_answer_query_string = "Refused to answer_query"
 
 exception No_initial_peers
-
-type Structured_log_events.t +=
-  | Block_received of { state_hash : State_hash.t; sender : Envelope.Sender.t }
-  [@@deriving register_event { msg = "Received a block from $sender" }]
-
-type Structured_log_events.t +=
-  | Snark_work_received of
-      { work : Snark_pool.Resource_pool.Diff.compact
-      ; sender : Envelope.Sender.t
-      }
-  [@@deriving
-    register_event { msg = "Received Snark-pool diff $work from $sender" }]
-
-type Structured_log_events.t +=
-  | Transactions_received of
-      { txns : Transaction_pool.Resource_pool.Diff.t
-      ; sender : Envelope.Sender.t
-      }
-  [@@deriving
-    register_event { msg = "Received transaction-pool diff $txns from $sender" }]
 
 type Structured_log_events.t +=
   | Gossip_new_state of { state_hash : State_hash.t }
@@ -1035,38 +1014,8 @@ type t =
   { logger : Logger.t
   ; trust_system : Trust_system.t
   ; gossip_net : Gossip_net.Any.t
-  ; online_status : [ `Offline | `Online ] Broadcast_pipe.Reader.t
-  ; first_received_message_signal : unit Ivar.t
   }
 [@@deriving fields]
-
-let offline_time
-    { Genesis_constants.Constraint_constants.block_window_duration_ms; _ } =
-  (* This is a bit of a hack, see #3232. *)
-  let inactivity_ms = block_window_duration_ms * 8 in
-  Block_time.Span.of_ms @@ Int64.of_int inactivity_ms
-
-let setup_timer ~constraint_constants time_controller sync_state_broadcaster =
-  Block_time.Timeout.create time_controller (offline_time constraint_constants)
-    ~f:(fun _ ->
-      Broadcast_pipe.Writer.write sync_state_broadcaster `Offline
-      |> don't_wait_for)
-
-let online_broadcaster ~constraint_constants time_controller =
-  let online_reader, online_writer = Broadcast_pipe.create `Offline in
-  let init =
-    Block_time.Timeout.create time_controller
-      (Block_time.Span.of_ms Int64.zero)
-      ~f:ignore
-  in
-  let current_timer = ref init in
-  let notify_online () =
-    let%map () = Broadcast_pipe.Writer.write online_writer `Online in
-    Block_time.Timeout.cancel time_controller !current_timer () ;
-    current_timer :=
-      setup_timer ~constraint_constants time_controller online_writer
-  in
-  (online_reader, notify_online)
 
 let wrap_rpc_data_in_envelope conn data =
   Envelope.Incoming.wrap_peer ~data ~sender:conn
@@ -1426,115 +1375,8 @@ let create (config : Config.t) ~sinks
           ~f:(fun (Rpc_handler { rpc; f; cost; budget }) ->
             Rpcs.(Rpc_handler { rpc = Consensus_rpc rpc; f; cost; budget })))
   in
-  let first_received_message_signal = Ivar.create () in
-  let online_status, notify_online =
-    online_broadcaster ~constraint_constants:config.constraint_constants
-      config.time_controller
-  in
-  (* TODO remove the line below after making sure notification will not lead
-     to a stale lock *)
-  let notify_online () =
-    notify_online () |> don't_wait_for ;
-    Deferred.unit
-  in
-  let consensus_constants = config.consensus_constants in
-  let wrapped_sinks =
-    Sinks.wrap_simple
-      ~block_pre:(fun (`Transition envelope, _, `Valid_cb valid_cb) ->
-        Ivar.fill_if_empty first_received_message_signal () ;
-        Mina_metrics.(Counter.inc_one Network.gossip_messages_received) ;
-        let state = envelope.data in
-        let processing_start_time =
-          Block_time.(now config.time_controller |> to_time)
-        in
-        don't_wait_for
-          ( match%map Mina_net2.Validation_callback.await valid_cb with
-          | Some `Accept ->
-              let processing_time_span =
-                Time.diff
-                  Block_time.(now config.time_controller |> to_time)
-                  processing_start_time
-              in
-              Mina_metrics.Block_latency.(
-                Validation_acceptance_time.update processing_time_span)
-          | _ ->
-              () ) ;
-        Perf_histograms.add_span ~name:"external_transition_latency"
-          (Core.Time.abs_diff
-             Block_time.(now config.time_controller |> to_time)
-             ( External_transition.protocol_state state
-             |> Protocol_state.blockchain_state |> Blockchain_state.timestamp
-             |> Block_time.to_time )) ;
-        Mina_metrics.(Gauge.inc_one Network.new_state_received) ;
-        if config.log_gossip_heard.new_state then
-          [%str_log info]
-            ~metadata:
-              [ ("external_transition", External_transition.to_yojson state) ]
-            (Block_received
-               { state_hash =
-                   (External_transition.state_hashes state).state_hash
-               ; sender = Envelope.Incoming.sender envelope
-               }) ;
-        Mina_net2.Validation_callback.set_message_type valid_cb `Block ;
-        Mina_metrics.(Counter.inc_one Network.Block.received) ;
-        notify_online ())
-      ~snark_pre:(fun (envelope, valid_cb) ->
-        Ivar.fill_if_empty first_received_message_signal () ;
-        Mina_metrics.(Counter.inc_one Network.gossip_messages_received) ;
-        Mina_metrics.(Gauge.inc_one Network.snark_pool_diff_received) ;
-        let diff = envelope.data in
-        if config.log_gossip_heard.snark_pool_diff then
-          Option.iter (Snark_pool.Resource_pool.Diff.to_compact diff)
-            ~f:(fun work ->
-              [%str_log debug]
-                (Snark_work_received
-                   { work; sender = Envelope.Incoming.sender envelope })) ;
-        Mina_metrics.(Counter.inc_one Network.Snark_work.received) ;
-        Mina_net2.Validation_callback.set_message_type valid_cb `Snark_work ;
-        notify_online ())
-      ~tx_pre:(fun (envelope, valid_cb) ->
-        Ivar.fill_if_empty first_received_message_signal () ;
-        Mina_metrics.(Counter.inc_one Network.gossip_messages_received) ;
-        Mina_metrics.(Gauge.inc_one Network.transaction_pool_diff_received) ;
-        let diff = envelope.data in
-
-        if config.log_gossip_heard.transaction_pool_diff then
-          [%str_log debug]
-            (Transactions_received
-               { txns = diff; sender = Envelope.Incoming.sender envelope }) ;
-        Mina_net2.Validation_callback.set_message_type valid_cb `Transaction ;
-        Mina_metrics.(Counter.inc_one Network.Transaction.received) ;
-        notify_online ())
-      ~block_post:(fun (`Transition tn, `Time_received tm, _) ->
-        let lift_consensus_time =
-          Fn.compose Unsigned.UInt32.to_int
-            Consensus.Data.Consensus_time.to_uint32
-        in
-        let tn_production_consensus_time =
-          External_transition.consensus_time_produced_at
-            (Envelope.Incoming.data tn)
-        in
-        let tn_production_slot =
-          lift_consensus_time tn_production_consensus_time
-        in
-        let tn_production_time =
-          Consensus.Data.Consensus_time.to_time ~constants:consensus_constants
-            tn_production_consensus_time
-        in
-        let tm_slot =
-          lift_consensus_time
-            (Consensus.Data.Consensus_time.of_time_exn
-               ~constants:consensus_constants tm)
-        in
-        Mina_metrics.Block_latency.Gossip_slots.update
-          (Float.of_int (tm_slot - tn_production_slot)) ;
-        Mina_metrics.Block_latency.Gossip_time.update
-          Block_time.(Span.to_time_span @@ diff tm tn_production_time) ;
-        Deferred.unit)
-      sinks
-  in
   let%map gossip_net =
-    Gossip_net.Any.create config.creatable_gossip_net rpc_handlers wrapped_sinks
+    Gossip_net.Any.create config.creatable_gossip_net rpc_handlers sinks
   in
   (* The node status RPC is implemented directly in go, serving a string which
      is periodically updated. This is so that one can make this RPC on a node even
@@ -1566,12 +1408,7 @@ let create (config : Config.t) ~sinks
         For example, some things you really want to not drop (like your outgoing
         block announcment).
   *)
-  { gossip_net
-  ; logger = config.logger
-  ; trust_system = config.trust_system
-  ; online_status
-  ; first_received_message_signal
-  }
+  { gossip_net; logger = config.logger; trust_system = config.trust_system }
 
 (* lift and expose select gossip net functions *)
 include struct
@@ -1623,12 +1460,6 @@ include struct
     lift set_connection_gating t config
 end
 
-let on_first_received_message { first_received_message_signal; _ } ~f =
-  Ivar.read first_received_message_signal >>| f
-
-let fill_first_received_message_signal { first_received_message_signal; _ } =
-  Ivar.fill_if_empty first_received_message_signal ()
-
 (* TODO: Have better pushback behavior *)
 let log_gossip logger ~log_msg msg =
   [%str_log' trace logger]
@@ -1675,8 +1506,6 @@ let find_map' xs ~f =
         else Deferred.never ())
   in
   Deferred.any (none_worked :: List.map ~f:(filter ~f:Or_error.is_ok) ds)
-
-let online_status t = t.online_status
 
 let make_rpc_request ?heartbeat_timeout ?timeout ~rpc ~label t peer input =
   let open Deferred.Let_syntax in

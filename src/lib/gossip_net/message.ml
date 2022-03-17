@@ -83,54 +83,9 @@ module type Sinks = sig
 
   module Snark_sink : Mina_net2.Sink.S with type msg := snark_sink_msg
 
-  type sinks =
+  type t =
     { sink_block : Block_sink.t
     ; sink_tx : Tx_sink.t
     ; sink_snark_work : Snark_sink.t
     }
-end
-
-module Wrapped_sinks (S : Sinks) = struct
-  module Block_sink = struct
-    type t = S.Block_sink.t * block_sink_msg push_modifier
-
-    let push (t, f) = f (S.Block_sink.push t)
-  end
-
-  module Tx_sink = struct
-    type t = S.Tx_sink.t * tx_sink_msg push_modifier
-
-    let push (t, f) = f (S.Tx_sink.push t)
-  end
-
-  module Snark_sink = struct
-    type t = S.Snark_sink.t * snark_sink_msg push_modifier
-
-    let push (t, f) = f (S.Snark_sink.push t)
-  end
-
-  type sinks =
-    { sink_block : Block_sink.t
-    ; sink_tx : Tx_sink.t
-    ; sink_snark_work : Snark_sink.t
-    }
-
-  let wrap ~block_push_modifier ~tx_push_modifier ~snark_push_modifier
-      (sinks : S.sinks) =
-    { sink_block = (sinks.sink_block, block_push_modifier)
-    ; sink_tx = (sinks.sink_tx, tx_push_modifier)
-    ; sink_snark_work = (sinks.sink_snark_work, snark_push_modifier)
-    }
-
-  let wrap_simple ?block_pre ?tx_pre ?snark_pre ?block_post ?tx_post ?snark_post
-      =
-    let modifier pre post f msg =
-      Option.value ~default:(const Deferred.unit) pre msg
-      >>= fun () ->
-      f msg >>= fun () -> Option.value ~default:(const Deferred.unit) post msg
-    in
-    wrap
-      ~block_push_modifier:(modifier block_pre block_post)
-      ~tx_push_modifier:(modifier tx_pre tx_post)
-      ~snark_push_modifier:(modifier snark_pre snark_post)
 end

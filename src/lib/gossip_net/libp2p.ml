@@ -104,7 +104,7 @@ let on_gossip_decode_failure (config : Config.t) envelope (err : Error.t) =
 module Make
     (SinksImpl : Message.Sinks)
     (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
-  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.sinks = struct
+  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.t = struct
   open Rpc_intf
 
   module T = struct
@@ -182,7 +182,7 @@ module Make
        BEFORE we start listening/advertise ourselves for discovery. *)
     let create_libp2p (config : Config.t) rpc_handlers first_peer_ivar
         high_connectivity_ivar ~added_seeds ~pids ~on_unexpected_termination
-        ~(sinks : SinksImpl.sinks) =
+        ~(sinks : SinksImpl.t) =
       let ctr = ref 0 in
       let record_peer_connection () =
         [%log' trace config.logger] "Fired peer_connected callback" ;
@@ -462,8 +462,7 @@ module Make
 
     let bandwidth_info t = !(t.net2) >>= Mina_net2.bandwidth_info
 
-    let create (config : Config.t) ~pids rpc_handlers (sinks : SinksImpl.sinks)
-        =
+    let create (config : Config.t) ~pids rpc_handlers (sinks : SinksImpl.t) =
       let first_peer_ivar = Ivar.create () in
       let high_connectivity_ivar = Ivar.create () in
       let net2_ref = ref (Deferred.never ()) in

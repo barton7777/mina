@@ -22,7 +22,7 @@ end
 module Make
     (SinksImpl : Message.Sinks)
     (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
-  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.sinks = struct
+  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.t = struct
   open Intf
   open Rpc_intf
 
@@ -33,7 +33,7 @@ module Make
           -> 'r Mina_base.Rpc_intf.rpc_response Deferred.t
       }
 
-    type network_interface = { sinks : SinksImpl.sinks; rpc_hook : rpc_hook }
+    type network_interface = { sinks : SinksImpl.t; rpc_hook : rpc_hook }
 
     type node = { peer : Peer.t; mutable interface : network_interface option }
 
