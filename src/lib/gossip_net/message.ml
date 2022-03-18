@@ -76,16 +76,20 @@ type snark_sink_msg =
 
 type 'msg push_modifier = ('msg -> unit Deferred.t) -> 'msg -> unit Deferred.t
 
-module type Sinks = sig
+module type Sinks_intf = sig
   module Block_sink : Mina_net2.Sink.S with type msg := block_sink_msg
 
   module Tx_sink : Mina_net2.Sink.S with type msg := tx_sink_msg
 
   module Snark_sink : Mina_net2.Sink.S with type msg := snark_sink_msg
 
-  type t =
-    { sink_block : Block_sink.t
-    ; sink_tx : Tx_sink.t
-    ; sink_snark_work : Snark_sink.t
-    }
+  type t = Block_sink.t * Tx_sink.t * Snark_sink.t
 end
+
+type ('sink_block, 'sink_tx, 'sink_snark) sinks_impl =
+  (module Sinks_intf
+     with type Block_sink.t = 'sink_block
+      and type Snark_sink.t = 'sink_snark
+      and type Tx_sink.t = 'sink_tx)
+
+type sinks = Any_sinks : ('a, 'b, 'c) sinks_impl * ('a * 'b * 'c) -> sinks

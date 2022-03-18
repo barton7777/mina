@@ -9,20 +9,20 @@ open Network_peer
 module type S = sig
   include Intf.Gossip_net_intf
 
-  type sinks
-
   type network
 
   val create_network : Peer.t list -> network
 
   val create_instance :
-    network -> Peer.t -> Rpc_intf.rpc_handler list -> sinks -> t Deferred.t
+       network
+    -> Peer.t
+    -> Rpc_intf.rpc_handler list
+    -> Message.sinks
+    -> t Deferred.t
 end
 
-module Make
-    (SinksImpl : Message.Sinks)
-    (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
-  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.t = struct
+module Make (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
+  S with module Rpc_intf := Rpc_intf = struct
   open Intf
   open Rpc_intf
 
@@ -33,7 +33,7 @@ module Make
           -> 'r Mina_base.Rpc_intf.rpc_response Deferred.t
       }
 
-    type network_interface = { sinks : SinksImpl.t; rpc_hook : rpc_hook }
+    type network_interface = { sinks : Message.sinks; rpc_hook : rpc_hook }
 
     type node = { peer : Peer.t; mutable interface : network_interface option }
 
@@ -259,18 +259,24 @@ module Make
     let query_random_peers _ = failwith "TODO stub"
 
     let broadcast_state t state =
-      Network.broadcast t.network ~sender:t.me state (fun sinks (env, vc) ->
+      Network.broadcast t.network ~sender:t.me state
+        (fun (Any_sinks (sinksM, (sink_block, _, _))) (env, vc) ->
           let time = Block_time.now t.time_controller in
-          SinksImpl.Block_sink.push sinks.sink_block
+          let module M = (val sinksM) in
+          M.Block_sink.push sink_block
             (`Transition env, `Time_received time, `Valid_cb vc))
 
     let broadcast_snark_pool_diff t diff =
-      Network.broadcast t.network ~sender:t.me diff (fun sinks ->
-          SinksImpl.Snark_sink.push sinks.sink_snark_work)
+      Network.broadcast t.network ~sender:t.me diff
+        (fun (Any_sinks (sinksM, (_, _, sink_snark_work))) ->
+          let module M = (val sinksM) in
+          M.Snark_sink.push sink_snark_work)
 
     let broadcast_transaction_pool_diff t diff =
-      Network.broadcast t.network ~sender:t.me diff (fun sinks ->
-          SinksImpl.Tx_sink.push sinks.sink_tx)
+      Network.broadcast t.network ~sender:t.me diff
+        (fun (Any_sinks (sinksM, (_, sink_tx, _))) ->
+          let module M = (val sinksM) in
+          M.Tx_sink.push sink_tx)
 
     let connection_gating t = Deferred.return !(t.connection_gating)
 

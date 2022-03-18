@@ -12,19 +12,15 @@ module type S = sig
 
   include Intf.Gossip_net_intf with module Rpc_intf := Rpc_intf and type t := t
 
-  type sinks
-
-  type 't creator = Rpc_intf.rpc_handler list -> sinks -> 't Deferred.t
+  type 't creator = Rpc_intf.rpc_handler list -> Message.sinks -> 't Deferred.t
 
   type creatable = Creatable : 't implementation * 't creator -> creatable
 
   val create : creatable -> t creator
 end
 
-module Make
-    (SinksImpl : Message.Sinks)
-    (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
-  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.t = struct
+module Make (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
+  S with module Rpc_intf := Rpc_intf = struct
   open Rpc_intf
 
   module type Implementation_intf =
@@ -34,7 +30,7 @@ module Make
 
   type t = Any : 't implementation * 't -> t
 
-  type 't creator = rpc_handler list -> SinksImpl.t -> 't Deferred.t
+  type 't creator = rpc_handler list -> Message.sinks -> 't Deferred.t
 
   type creatable = Creatable : 't implementation * 't creator -> creatable
 

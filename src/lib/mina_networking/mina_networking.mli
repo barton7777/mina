@@ -148,10 +148,7 @@ module Rpcs : sig
   include Rpc_intf.Rpc_interface_intf with type ('q, 'r) rpc := ('q, 'r) rpc
 end
 
-module Sinks : module type of Sinks
-
-module Gossip_net :
-  Gossip_net.S with module Rpc_intf := Rpcs with type sinks := Sinks.t
+module Gossip_net : Gossip_net.S with module Rpc_intf := Rpcs
 
 module Config : sig
   type log_gossip_heard =

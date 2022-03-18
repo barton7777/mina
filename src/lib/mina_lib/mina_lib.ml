@@ -1602,12 +1602,7 @@ let create ?wallets (config : Config.t) =
               ; consensus_constants = config.net_config.consensus_constants
               }
           in
-          let sinks =
-            { Mina_networking.Sinks.sink_block = block_sink
-            ; sink_tx = tx_remote_sink
-            ; sink_snark_work = snark_remote_sink
-            }
-          in
+          let sinks = (block_sink, tx_remote_sink, snark_remote_sink) in
           let%bind net =
             Mina_networking.create config.net_config ~sinks
               ~get_some_initial_peers

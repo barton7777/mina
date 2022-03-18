@@ -987,8 +987,7 @@ module Rpcs = struct
         None
 end
 
-module Sinks = Sinks
-module Gossip_net = Gossip_net.Make (Sinks) (Rpcs)
+module Gossip_net = Gossip_net.Make (Rpcs)
 
 module Config = struct
   type log_gossip_heard =
@@ -1376,7 +1375,8 @@ let create (config : Config.t) ~sinks
             Rpcs.(Rpc_handler { rpc = Consensus_rpc rpc; f; cost; budget })))
   in
   let%map gossip_net =
-    Gossip_net.Any.create config.creatable_gossip_net rpc_handlers sinks
+    Gossip_net.Any.create config.creatable_gossip_net rpc_handlers
+      (Gossip_net.Message.Any_sinks ((module Sinks), sinks))
   in
   (* The node status RPC is implemented directly in go, serving a string which
      is periodically updated. This is so that one can make this RPC on a node even

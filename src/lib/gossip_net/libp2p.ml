@@ -46,13 +46,11 @@ end
 module type S = sig
   include Intf.Gossip_net_intf
 
-  type sinks
-
   val create :
        Config.t
     -> pids:Child_processes.Termination.t
     -> Rpc_intf.rpc_handler list
-    -> sinks
+    -> Message.sinks
     -> t Deferred.t
 end
 
@@ -101,10 +99,8 @@ let on_gossip_decode_failure (config : Config.t) envelope (err : Error.t) =
   |> don't_wait_for ;
   ()
 
-module Make
-    (SinksImpl : Message.Sinks)
-    (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
-  S with module Rpc_intf := Rpc_intf with type sinks := SinksImpl.t = struct
+module Make (Rpc_intf : Mina_base.Rpc_intf.Rpc_interface_intf) :
+  S with module Rpc_intf := Rpc_intf = struct
   open Rpc_intf
 
   module T = struct
@@ -182,7 +178,9 @@ module Make
        BEFORE we start listening/advertise ourselves for discovery. *)
     let create_libp2p (config : Config.t) rpc_handlers first_peer_ivar
         high_connectivity_ivar ~added_seeds ~pids ~on_unexpected_termination
-        ~(sinks : SinksImpl.t) =
+        ~sinks:
+          (Message.Any_sinks (sinksM, (sink_block, sink_tx, sink_snark_work))) =
+      let module Sinks = (val sinksM) in
       let ctr = ref 0 in
       let record_peer_connection () =
         [%log' trace config.logger] "Fired peer_connected callback" ;
@@ -394,16 +392,16 @@ module Make
                 ~fn:(fun (env, vc) ->
                   match Envelope.Incoming.data env with
                   | Message.New_state state ->
-                      SinksImpl.Block_sink.push sinks.sink_block
+                      Sinks.Block_sink.push sink_block
                         ( `Transition
                             (Envelope.Incoming.map ~f:(fun _ -> state) env)
                         , `Time_received (Block_time.now config.time_controller)
                         , `Valid_cb vc )
                   | Message.Transaction_pool_diff diff ->
-                      SinksImpl.Tx_sink.push sinks.sink_tx
+                      Sinks.Tx_sink.push sink_tx
                         (Envelope.Incoming.map ~f:(fun _ -> diff) env, vc)
                   | Message.Snark_pool_diff diff ->
-                      SinksImpl.Snark_sink.push sinks.sink_snark_work
+                      Sinks.Snark_sink.push sink_snark_work
                         (Envelope.Incoming.map ~f:(fun _ -> diff) env, vc))
                 "coda/consensus-messages/0.0.1" Message.Latest.T.bin_msg
             in
@@ -462,7 +460,7 @@ module Make
 
     let bandwidth_info t = !(t.net2) >>= Mina_net2.bandwidth_info
 
-    let create (config : Config.t) ~pids rpc_handlers (sinks : SinksImpl.t) =
+    let create (config : Config.t) ~pids rpc_handlers (sinks : Message.sinks) =
       let first_peer_ivar = Ivar.create () in
       let high_connectivity_ivar = Ivar.create () in
       let net2_ref = ref (Deferred.never ()) in
